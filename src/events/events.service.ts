@@ -14,14 +14,9 @@ export class EventsService {
   ) {}
 
   async create(dto: CreateEventDto): Promise<Event> {
-    console.log("inviteeIds length:", dto.inviteeIds.length);
-    // To inspect what is actually in userRepo, you can log its constructor name and available methods:
-    console.log("userRepo constructor:", this.userRepo.constructor.name);
-    console.log("userRepo methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(this.userRepo)));
     const invitees = dto.inviteeIds!.length
       ? await this.userRepo.find({ where: { id: In(dto.inviteeIds) } })
       : [];
-    console.log('Found invitees:', invitees);
     const event = this.eventRepo.create({
       ...dto,
       startTime: dto.startTime ? new Date(dto.startTime) : undefined,
@@ -44,8 +39,6 @@ export class EventsService {
   // src/events/events.service.ts
   async mergeAllForUser(userId: string) {
     // 1) load all events where this user is an invitee, with times
-    console.log("!!loading events for user");
-    // First, get event IDs where the user is an invitee
     const eventIds = await this.eventRepo.createQueryBuilder('e')
       .leftJoin('e.invitees', 'u')
       .where('u.id = :userId', { userId })
@@ -60,11 +53,9 @@ export class EventsService {
       relations: ['invitees'],
       order: { startTime: 'ASC' }
     });
-    console.log(`Found ${events.length} events for user ${userId}`);
     if (events.length === 0) return { merged: [], removed: [] };
 
     // 2) group by overlap
-    console.log("!!grouping events by overlap");
     type Group = { start: Date; end: Date; items: typeof events };
     const groups: Group[] = [];
     let cur: Group | null = null;
@@ -72,7 +63,6 @@ export class EventsService {
     const overlaps = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) =>
       aStart <= bEnd && bStart <= aEnd;
 
-    console.log("events:", events);
     for (const ev of events) {
       if (!cur) {
         cur = { start: ev.startTime!, end: ev.endTime!, items: [ev] };
@@ -91,25 +81,22 @@ export class EventsService {
     if (cur) groups.push(cur);
     
     // 3) for each group: union invitees, create one merged event, delete originals
-    console.log("!!for each group: union invitees, create one merged event, delete originals");
     const mergedResults: any[] = [];
     const removedIds: string[] = [];
 
     for (const g of groups) {
-      console.log(`Processing group: ${JSON.stringify(g)}`);
       // union invitees
       const inviteeMap = new Map<string, any>();
       for (const ev of g.items) {
         for (const user of ev.invitees || []) inviteeMap.set(user.id, user);
       }
-      console.log(`Found inviteeMap: ${JSON.stringify(Array.from(inviteeMap.entries()))}`);
       const invitees = Array.from(inviteeMap.values());
 
       // create merged event
       const merged = this.eventRepo.create({
         title: `Merged (${g.items.length})`,
         description: 'Auto-merged overlapping events',
-        status: g.items[0].status, // or choose a rule
+        status: g.items[0].status,
         startTime: g.start,
         endTime: g.end,
         invitees,
