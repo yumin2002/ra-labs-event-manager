@@ -5,7 +5,6 @@ import { Repository, In } from 'typeorm';
 import { Event } from './event.entity';
 import { User } from '../users/user.entity';
 import { CreateEventDto } from './dto/create-event.dto';
-import { UpdateEventDto } from './dto/update-event.dto';
 
 @Injectable()
 export class EventsService {
@@ -15,9 +14,14 @@ export class EventsService {
   ) {}
 
   async create(dto: CreateEventDto): Promise<Event> {
-    const invitees = dto.inviteeIds?.length
+    console.log("inviteeIds length:", dto.inviteeIds.length);
+    // To inspect what is actually in userRepo, you can log its constructor name and available methods:
+    console.log("userRepo constructor:", this.userRepo.constructor.name);
+    console.log("userRepo methods:", Object.getOwnPropertyNames(Object.getPrototypeOf(this.userRepo)));
+    const invitees = dto.inviteeIds!.length
       ? await this.userRepo.find({ where: { id: In(dto.inviteeIds) } })
       : [];
+    console.log('Found invitees:', invitees);
     const event = this.eventRepo.create({
       ...dto,
       startTime: dto.startTime ? new Date(dto.startTime) : undefined,
@@ -31,20 +35,6 @@ export class EventsService {
     return this.eventRepo.findOne({ where: { id }, relations: ['invitees'] });
   }
 
-  async update(id: string, dto: UpdateEventDto) {
-    const event = await this.findOne(id);
-    if (!event) throw new NotFoundException('Event not found');
-
-    if (dto.inviteeIds) {
-      event.invitees = await this.userRepo.find({ where: { id: In(dto.inviteeIds) } });
-    }
-    if (dto.startTime !== undefined) event.startTime = dto.startTime ? new Date(dto.startTime) : null;
-    if (dto.endTime !== undefined)   event.endTime   = dto.endTime   ? new Date(dto.endTime)   : null;
-
-    Object.assign(event, dto, { invitees: event.invitees });
-    return this.eventRepo.save(event);
-  }
-
   async remove(id: string) {
     const res = await this.eventRepo.delete(id);
     if (!res.affected) throw new NotFoundException('Event not found');
@@ -54,23 +44,35 @@ export class EventsService {
   // src/events/events.service.ts
   async mergeAllForUser(userId: string) {
     // 1) load all events where this user is an invitee, with times
-    const events = await this.eventRepo.createQueryBuilder('e')
-      .leftJoinAndSelect('e.invitees', 'u')
+    console.log("!!loading events for user");
+    // First, get event IDs where the user is an invitee
+    const eventIds = await this.eventRepo.createQueryBuilder('e')
+      .leftJoin('e.invitees', 'u')
       .where('u.id = :userId', { userId })
       .andWhere('e.startTime IS NOT NULL AND e.endTime IS NOT NULL')
       .orderBy('e.startTime', 'ASC')
+      .select('e.id')
       .getMany();
 
+    // Then, fetch all events with all invitees
+    const events = await this.eventRepo.find({
+      where: { id: In(eventIds.map(e => e.id)) },
+      relations: ['invitees'],
+      order: { startTime: 'ASC' }
+    });
+    console.log(`Found ${events.length} events for user ${userId}`);
     if (events.length === 0) return { merged: [], removed: [] };
 
     // 2) group by overlap
+    console.log("!!grouping events by overlap");
     type Group = { start: Date; end: Date; items: typeof events };
     const groups: Group[] = [];
     let cur: Group | null = null;
-
+    
     const overlaps = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) =>
       aStart <= bEnd && bStart <= aEnd;
 
+    console.log("events:", events);
     for (const ev of events) {
       if (!cur) {
         cur = { start: ev.startTime!, end: ev.endTime!, items: [ev] };
@@ -87,17 +89,20 @@ export class EventsService {
       }
     }
     if (cur) groups.push(cur);
-
+    
     // 3) for each group: union invitees, create one merged event, delete originals
+    console.log("!!for each group: union invitees, create one merged event, delete originals");
     const mergedResults: any[] = [];
     const removedIds: string[] = [];
 
     for (const g of groups) {
+      console.log(`Processing group: ${JSON.stringify(g)}`);
       // union invitees
       const inviteeMap = new Map<string, any>();
       for (const ev of g.items) {
         for (const user of ev.invitees || []) inviteeMap.set(user.id, user);
       }
+      console.log(`Found inviteeMap: ${JSON.stringify(Array.from(inviteeMap.entries()))}`);
       const invitees = Array.from(inviteeMap.values());
 
       // create merged event

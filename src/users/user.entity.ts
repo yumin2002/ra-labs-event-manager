@@ -10,7 +10,6 @@ export class User {
   @Column({ length: 100 })
   name: string;
 
-
   @ManyToMany(() => Event, (event) => event.invitees)
   events: Event[];
 }

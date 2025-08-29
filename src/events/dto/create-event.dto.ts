@@ -7,5 +7,5 @@ export class CreateEventDto {
   @IsEnum(EventStatus) status: EventStatus;
   @IsOptional() @IsISO8601() startTime?: string; // ISO8601 strings; pipe can transform to Date
   @IsOptional() @IsISO8601() endTime?: string;
-  @IsOptional() @ArrayNotEmpty() @IsUUID('4', { each: true }) inviteeIds?: string[];
+  @IsOptional() @IsUUID(undefined, { each: true }) inviteeIds?: string[];
 }
