@@ -2,6 +2,7 @@ import { Module, ValidationPipe } from '@nestjs/common';
 import { APP_PIPE } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { EventsModule } from './events/events.module';
 
 @Module({
   imports: [
@@ -17,6 +18,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
       synchronize: process.env.NODE_ENV !== 'production',
       logging: true,
     }),
+    EventsModule,
+    
   ],
 
   providers: [
