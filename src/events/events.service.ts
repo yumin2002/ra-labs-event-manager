@@ -5,6 +5,7 @@ import { Repository, In } from 'typeorm';
 import { Event } from './event.entity';
 import { User } from '../users/user.entity';
 import { CreateEventDto } from './dto/create-event.dto';
+import { EventStatus } from './event-status.enum';
 
 @Injectable()
 export class EventsService {
@@ -26,8 +27,10 @@ export class EventsService {
     return this.eventRepo.save(event);
   }
 
-  findOne(id: string) {
-    return this.eventRepo.findOne({ where: { id }, relations: ['invitees'] });
+  async findOne(id: string) {
+    const event = await this.eventRepo.findOne({ where: { id }, relations: ['invitees'] });
+    if (!event) throw new NotFoundException('Event not found');
+    return event;
   }
 
   async remove(id: string) {
@@ -79,24 +82,40 @@ export class EventsService {
       }
     }
     if (cur) groups.push(cur);
+
+    // Only merge groups that have more than one event; leave standalone events untouched
+    const groupsToMerge = groups.filter(g => g.items.length > 1);
+    if (groupsToMerge.length === 0) return { merged: [], removed: [] };
     
     // 3) for each group: union invitees, create one merged event, delete originals
     const mergedResults: any[] = [];
     const removedIds: string[] = [];
 
-    for (const g of groups) {
+    for (const g of groupsToMerge) {
       // union invitees
       const inviteeMap = new Map<string, any>();
       for (const ev of g.items) {
         for (const user of ev.invitees || []) inviteeMap.set(user.id, user);
       }
       const invitees = Array.from(inviteeMap.values());
-
+      const statuses = g.items.map(e => e.status);
+      let status: EventStatus;
+      if (statuses.includes(EventStatus.TODO)) {
+        status = EventStatus.TODO;
+      } else if (statuses.includes(EventStatus.IN_PROGRESS)) {
+        status = EventStatus.IN_PROGRESS;
+      } else {
+        status = EventStatus.COMPLETED;
+      }
+      // build merged description listing all merged events
+      const mergedList = g.items
+        .map((e, idx) => `${idx + 1}. ${e.title}: ${e.description}`)
+        .join('\n');
       // create merged event
       const merged = this.eventRepo.create({
         title: `Merged (${g.items.length})`,
-        description: 'Auto-merged overlapping events',
-        status: g.items[0].status,
+        description: `Auto-merged overlapping events:\n${mergedList}`,
+        status,
         startTime: g.start,
         endTime: g.end,
         invitees,
@@ -104,7 +123,6 @@ export class EventsService {
       const saved = await this.eventRepo.save(merged);
       mergedResults.push(saved);
 
-      // remove originals
       const ids = g.items.map((e) => e.id);
       removedIds.push(...ids);
       await this.eventRepo.delete(ids);
@@ -112,15 +130,4 @@ export class EventsService {
 
     return { merged: mergedResults, removed: removedIds };
   }
-
-
-  // optional: list with filters/pagination
-  // list({ status, skip = 0, take = 20 }: { status?: string; skip?: number; take?: number }) {
-  //   return this.eventRepo.find({
-  //     where: status ? { status } : {},
-  //     relations: ['invitees'],
-  //     order: { createdAt: 'DESC' },
-  //     skip, take,
-  //   });
-  // }
 }
