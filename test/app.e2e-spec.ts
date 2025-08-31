@@ -7,7 +7,7 @@ import { DataSource } from 'typeorm';
 import { AppModule } from './../src/app.module';
 import { User } from '../src/users/user.entity';
 
-describe('Events API E2E: CRUD and overlap merging', () => {
+describe('Events API E2E: CRUD with one overlap merging', () => {
   let app: INestApplication<App>;
 
   // Seed demo users and pick one as the invitee under test
