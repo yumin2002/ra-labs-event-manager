@@ -297,4 +297,85 @@ describe('Events API E2E: merge-all scenarios', () => {
     expect(res.body.merged.length).toBe(0);
     expect(res.body.removed.length).toBe(0);
   });
+  
+});
+
+describe('Events API E2E: user persistence and merge-all after deletions', () => {
+  let app: INestApplication<App>;
+  let inviteeId: string;
+
+  beforeAll(async () => {
+    const moduleFixture = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+    app = moduleFixture.createNestApplication();
+    await app.init();
+
+    const dataSource = app.get<DataSource>(getDataSourceToken());
+    const userRepo = dataSource.getRepository(User);
+
+    const user = userRepo.create({
+      id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      name: 'PersistedUser',
+    });
+    await userRepo.save(user);
+    inviteeId = user.id;
+  });
+
+  afterAll(async () => {
+    const ds = app.get<DataSource>(getDataSourceToken());
+    await ds.query('TRUNCATE TABLE "event_invitees","events","users" RESTART IDENTITY CASCADE;');
+    await app.close();
+  });
+
+  it('deleting all events for a user keeps the user in the database and merge-all does not resurrect deleted events', async () => {
+    // Create two events for the user
+    const e1Res = await request(app.getHttpServer())
+      .post('/events')
+      .send({
+        title: 'Temp 1',
+        status: 'TODO',
+        startTime: '2026-01-01T12:00:00Z',
+        endTime: '2026-01-01T12:30:00Z',
+        inviteeIds: [inviteeId],
+      })
+      .expect(201);
+    const e2Res = await request(app.getHttpServer())
+      .post('/events')
+      .send({
+        title: 'Temp 2',
+        status: 'TODO',
+        startTime: '2026-01-01T13:00:00Z',
+        endTime: '2026-01-01T13:30:00Z',
+        inviteeIds: [inviteeId],
+      })
+      .expect(201);
+
+    const e1Id = e1Res.body.id;
+    const e2Id = e2Res.body.id;
+
+    // Delete both events
+    await request(app.getHttpServer()).delete(`/events/${e1Id}`).expect(200);
+    await request(app.getHttpServer()).delete(`/events/${e2Id}`).expect(200);
+
+    // Ensure events are gone
+    await request(app.getHttpServer()).get(`/events/${e1Id}`).expect(404);
+    await request(app.getHttpServer()).get(`/events/${e2Id}`).expect(404);
+
+    // User should still exist in DB
+    const dataSource = app.get<DataSource>(getDataSourceToken());
+    const userRepo = dataSource.getRepository(User);
+    const user = await userRepo.findOne({ where: { id: inviteeId } });
+    expect(user).toBeTruthy();
+    expect(user?.id).toBe(inviteeId);
+
+    // Calling merge-all should not return any merged or removed events
+    const mergeRes = await request(app.getHttpServer())
+      .post(`/events/merge-all/${inviteeId}`)
+      .expect(201);
+    expect(Array.isArray(mergeRes.body.merged)).toBe(true);
+    expect(Array.isArray(mergeRes.body.removed)).toBe(true);
+    expect(mergeRes.body.merged.length).toBe(0);
+    expect(mergeRes.body.removed.length).toBe(0);
+  });
 });

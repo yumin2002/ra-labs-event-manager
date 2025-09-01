@@ -15,13 +15,21 @@ export class EventsService {
   ) {}
 
   async create(dto: CreateEventDto): Promise<Event> {
-    const invitees = dto.inviteeIds!.length
-      ? await this.userRepo.find({ where: { id: In(dto.inviteeIds) } })
-      : [];
+    const ids = Array.from(new Set(dto.inviteeIds));
+    let invitees: User[] = [];
+    // check if invitees exist
+    if (ids.length) {
+      invitees = await this.userRepo.find({ where: { id: In(ids) } });
+      if (invitees.length !== ids.length) {
+        const found = new Set(invitees.map(u => u.id));
+        const missing = ids.filter(id => !found.has(id));
+        throw new NotFoundException(`Invitee(s) not found: ${missing.join(', ')}`);
+      }
+    }
     const event = this.eventRepo.create({
       ...dto,
-      startTime: dto.startTime ? new Date(dto.startTime) : undefined,
-      endTime: dto.endTime ? new Date(dto.endTime) : undefined,
+      startTime: new Date(dto.startTime),
+      endTime: new Date(dto.endTime),
       invitees,
     });
     return this.eventRepo.save(event);
@@ -41,6 +49,9 @@ export class EventsService {
 
   // src/events/events.service.ts
   async mergeAllForUser(userId: string) {
+    // Ensure the user exists
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
     // 1) load all events where this user is an invitee, with times
     const eventIds = await this.eventRepo.createQueryBuilder('e')
       .leftJoin('e.invitees', 'u')
@@ -49,6 +60,10 @@ export class EventsService {
       .orderBy('e.startTime', 'ASC')
       .select('e.id')
       .getMany();
+
+    if (eventIds.length === 0) {
+      return { merged: [], removed: [] };
+    }
 
     // Then, fetch all events with all invitees
     const events = await this.eventRepo.find({
@@ -115,13 +130,13 @@ export class EventsService {
       const merged = this.eventRepo.create({
         title: `Merged (${g.items.length})`,
         description: `Auto-merged overlapping events:\n${mergedList}`,
-        status,
+        status: status,
         startTime: g.start,
         endTime: g.end,
         invitees,
       });
       const saved = await this.eventRepo.save(merged);
-      mergedResults.push(saved);
+      mergedResults.push(merged);
 
       const ids = g.items.map((e) => e.id);
       removedIds.push(...ids);
