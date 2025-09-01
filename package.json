@@ -13,12 +13,13 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
-    "test": "jest",
+    "test": "npm run test:unit && npm run test:e2e",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/jest/bin/jest --runInBand",
+    "test:unit": "jest",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "dev": "docker compose up -d && nest start --watch",
+    "dev": "cp .env.example .env && docker compose up -d && nest start --watch",
     "db:down": "docker compose down"
   },
   "engines": {
